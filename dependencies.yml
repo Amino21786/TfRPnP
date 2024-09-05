@@ -16,6 +16,7 @@
   - pyyaml
   - pillow
   - pytorch
+  - torch
   - torchvision
   - cudatoolkit=11.0  # or your CUDA version if using GPU
   - opencv
@@ -33,6 +34,11 @@
   - equinox
   - optax
   - vtk
+  - tqdm
+  - bm3d
+  - skimage
+  - scipy
+  - statsmodels
   - setuptools
   
   - pip:

@@ -13,6 +13,7 @@ import torch.nn.functional as F
 from algorithms import *
 
 
+
 def comparison_plot(norm_res, method, ytitle='PSNR', color='k', title = 'PSNR'):
     K = len(norm_res)
 

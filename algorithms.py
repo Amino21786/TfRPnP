@@ -13,11 +13,15 @@ from utils.torch_denoise_tv_chambolle import *
 
 #MNIST dataset
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 
 # Deep inverse imports
 import deepinv as dinv
 from deepinv.models import DnCNN, DRUNet
+
+
+from radon import fbp, forward_operator_radon, add_noise
 
 
 
@@ -240,6 +244,7 @@ gsdrunet = GSDRUNet(
 
 
 def apply_denoiser(x, l, imsize, sigma = None,  method = 'tv', ):
+        
         """
         Denoiser options to replace the proximal step
         """
@@ -272,3 +277,192 @@ def apply_denoiser(x, l, imsize, sigma = None,  method = 'tv', ):
             x = gsdrunet(x, sigma = sigma)
             x =  x.squeeze(0).squeeze(0)
             return x.flatten().detach()
+        
+
+
+#PnP-PGD
+def pnp_pgd(A, b, x_truth, method = None, reg_l = 1e-5, iters = 50, tol = 1e-3, sigma = 0.05, L = 0):
+    """
+    PnP iterative shrinkage thrseholding algorithm (PnP-ISTA)
+    """
+    n = int(np.sqrt(A.shape[1]))
+    imsize = (n,n)
+    x = torch.zeros_like(x_truth, requires_grad=False)
+    #x = fbp(b, n_angles).flatten()
+    psnrs = []
+    iterates_pairs = []
+    differences = []
+    increments =[]
+    #L = torch.norm(A) ** 2  # Lipschitz constant
+    if L == 0:
+        L = power_method(A.T @ A)
+    t = 1 / L # Initial stepsize
+    b = b.flatten()
+
+    #f = lambda x: 0.5 * torch.norm(A @ x - b) ** 2
+    #grad_f =lambda x: A.T @ (A @ x - b)
+    #psnr.append(PSNR(x_truth, x))
+    for i in tqdm(range(iters), desc = str(method) + '-PnP PGD iterations'):
+        
+        #gradient descent step
+        current_grad = A.T @ (A @ x - b)
+        #print("current gradient:", current_grad)
+        x_new = x - (t * current_grad)
+           
+        """
+        #backtracking line search (Armijo condition)
+        while True:
+            x_new = x - (t * current_grad)
+            if (torch.norm(A @ (x_new - x)) ** 2) <=  t*(current_grad.T @ current_grad):
+                break
+            t *= 0.5
+        """
+
+        #denoising step (proximal step)
+        denoised_x = apply_denoiser(x_new, reg_l, imsize,  method = method, sigma = sigma)
+        #x = soft_thresh(x_descent, l / L)
+
+        #inverted and denoised iterates stored
+        iterates_pairs.append((x_new, denoised_x))
+        #difference between "noisy and denoised iterates"
+        diff = x_new - denoised_x
+        differences.append(diff)
+        #print("MSE for new iterate:", torch.norm(x_truth - denoised_x)**2)
+        
+        increments.append(torch.norm(x - denoised_x))
+        #new estimate
+        x = denoised_x
+        psnr = PSNR(x_truth, x).detach()
+        psnrs.append(psnr)
+        if torch.norm(current_grad) <= tol:  # Termination criterion
+            print('Iteration {}: gradient norm {:.4e} is less than tolerance {}\n'.format(i, torch.norm(current_grad), tol))
+            break
+
+    print(f"PnP-{method} Final PSNR: {psnr:.2f} dB")
+
+    return x, psnrs, differences, iterates_pairs, increments
+
+
+
+#PnP-FISTA
+def pnp_fista(A, b, x_truth, method = None, reg_l = 1e-5, iters = 50, tol = 1e-3, sigma = 0.05, L = 0):
+    """
+    PnP FISTA (accelerated PGD)
+    """
+
+    n = int(np.sqrt(A.shape[1]))
+    imsize = (n,n)
+    #ground = 0.5 * np.linalg.norm(A.dot(x_g) - b) ** 2 + l * np.linalg.norm(x_g, 1)
+    x = torch.zeros_like(x_truth, requires_grad=False)
+    #x = fbp(b, n_angles).flatten()
+    psnrs = []
+    iterates_pairs = []
+    differences = []
+    increments = []
+    if L == 0:
+        L = power_method(A.T @ A)  # Lipschitz constant
+
+    b = b.flatten()
+    
+
+    #Initialisation of parameters (step size and initial guesses)
+    t = 1
+    z = x.clone()
+    
+    for i in tqdm(range(iters), desc = 'PnP FISTA iterations'):
+        grad_g = A.T @ (A @ x - b)
+        xold = x.clone()
+        z = z + A.T @(b - A @ z) / L
+        zold = z.clone()
+        x = apply_denoiser(z, reg_l, imsize, method= method, sigma = sigma)
+        t0 = t
+        t = (1 + torch.sqrt(torch.tensor(1 + 4 * t ** 2))) / 2.
+        z = x + ((t0 - 1) / t) * (x - xold)
+        
+        incr = torch.norm(x - xold)
+        increments.append(incr)
+
+        #inverted and denoised iterates stored
+        iterates_pairs.append((zold, x))
+        #difference between "noisy and denoised iterates"
+        diff = zold - x 
+        differences.append(diff)
+
+        #print("MSE for new iterate:", torch.norm(x_truth - denoised_x)**2)
+
+        psnr = PSNR(x_truth, x).detach()
+        psnrs.append(psnr)
+        if torch.norm(grad_g) <= tol:  # Termination criterion
+            print('Iteration {}: gradient norm {:.4e} is less than tolerance {}\n'.format(i, torch.norm(grad_g), tol))
+            break
+
+    print(f"PnP-{method} Final PSNR: {psnr:.2f} dB")
+    return x, psnrs, differences, iterates_pairs, increments
+
+
+def pnp_admm(A, b, x_ground_truth, denoiser, angles = 60, niter = 50, beta = 1e+1, lamb = 1, sigma = 0.05, tol = 1e-6):
+    """
+    Plug-and-play alternat directions method of multipliers
+    """
+    n = int(np.sqrt(A.shape[1]))
+    imsize = (n,n)
+    m = A.shape[0]
+    detectors = m//angles
+    
+    # Define the 3 variables for use
+    x = torch.zeros_like(x_ground_truth)
+    u = torch.zeros_like(x_ground_truth)
+    v = torch.zeros_like(x_ground_truth)
+    psnrs = []
+    iterates_pairs = []
+    diffs = []
+    increments =[]
+    inv_beta = 1/beta
+
+    # PnP ADMM iteration performed on the 3 variables
+    for i in tqdm(range(niter), desc= str(denoiser) + '-PnP ADMM iterations'):
+        x_k = x
+        #print("b shape:", b.shape)
+        #measurement = b.reshape((int(torch.ceil(n * torch.sqrt(torch.tensor(2)))), n))
+        correction = (A @ (inv_beta * (u - v)))
+        #print("correction shape:", correction.shape)
+        #print("b shape:", b.shape)
+        sinogram = b + correction.reshape(detectors, angles)
+        #print("b shape:", b.shape)
+        x = fbp(sinogram, angles).flatten().float()
+        #print("x fbp shape:", x.shape)
+
+        
+        u = apply_denoiser(x + v, lamb, imsize, method = denoiser, sigma = sigma).float()
+        #print("u shape:", u.shape)
+    
+
+        v = (v + x - u).float()
+
+        # Flattening u and v for the next iteration (2D to 1D)
+        #u = u.flatten()
+        #v = v.flatten()
+
+
+        increment = torch.norm(x - x_k)
+        diff = x - u
+
+        #inverted and denoised iterates stored
+        iterates_pairs.append((x, u))
+        
+        #print("MSE for new iterate:", torch.norm(x_truth - denoised_x)**2)
+        
+        increments.append(increment)
+        #difference between "noisy and denoised iterates"
+        diffs.append(diff)
+
+        current_psnr = PSNR(x_ground_truth, x).detach()
+        psnrs.append(current_psnr)
+        if increment <= tol:
+            print('Iteration {}: error between sucessive iterates {:.4e} is less than tolerance {}\n'.format(i, increment, tol))
+            break
+
+    print(f"Final PSNR: {current_psnr:.2f} dB")
+
+    return x, psnrs, diffs, iterates_pairs, increments
+    

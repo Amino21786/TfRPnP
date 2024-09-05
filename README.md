@@ -21,7 +21,7 @@ Other subfolders:
 
 ## Functionality of the files
 There was mainly a use of Jupyter notebooks for fast and easy use of running the respective algorithms and denoisers. Each notebook had an array of functions to fit their purpose and use similar elements across the board (e.g algorithms, forward operators, noise etc)
-For the deep denoisers' training weights, \path{deepinv} Pytorch library was used with help from their documentation (Github: https://github.com/deepinv/deepinv
+For the deep denoisers' training weights, deepinv Pytorch library was used with help from their documentation (Github: https://github.com/deepinv/deepinv
 Documentation:https://deepinv.github.io/deepinv/index.html). Note that all files are implemented to work with torch Python library (inputs as torch tensors, can be adapted to numpy as well).
 
 Notebook files (.ipynb):
@@ -61,7 +61,7 @@ python algorithms.py
 or using coding editors such as VSC to run the individual files. (In the future there will be a construction of a main.py to run all the necessary models needed for results)
 
 # Acknowledgements
-Huge thanks to Dr Yury Korolev and Dr Matthias Ehrhardt for supervising during this project. There were many insightful and helpful discussions, alongside valuable support through the duration of the project. The deep NN denoisers' training weights were used from the \path{deepinv} Python Pytorch library, which greatly helped with implementation of the algorithms and gave inspiration for adapting to my work.
+Huge thanks to Dr Yury Korolev and Dr Matthias Ehrhardt for supervising during this project. There were many insightful and helpful discussions, alongside valuable support through the duration of the project. The deep NN denoisers' training weights were used from the deepinv Python Pytorch library, which greatly helped with implementation of the algorithms and gave inspiration for adapting to my work.
 This project was part of my 1st year MRes of statistical applied mathematics at the University of Bath (SAMBa) PhD programme.
 
 
